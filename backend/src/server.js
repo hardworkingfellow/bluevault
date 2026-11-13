@@ -1,5 +1,5 @@
 import { createServer } from 'node:http'
-import { randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto'
+import { createHmac, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto'
 import { promisify } from 'node:util'
 import { MongoClient } from 'mongodb'
 
@@ -7,8 +7,12 @@ const scrypt = promisify(scryptCallback)
 const mongoClient = new MongoClient(process.env.MONGODB_URI || '')
 let usersCollection
 const allowedOrigin = process.env.FRONTEND_ORIGIN || 'http://localhost:5173'
-const sessions = new Map()
-const sessionLifetimeMs = 12 * 60 * 60 * 1000
+const revokedTokens = new Set()
+const jwtSecret = process.env.JWT_SECRET
+const jwtExpiresIn = process.env.JWT_EXPIRES_IN || '180d'
+const sessionLifetimeSeconds = parseDurationSeconds(jwtExpiresIn)
+if (!jwtSecret) throw new Error('JWT_SECRET must be set to sign authentication tokens.')
+if (!sessionLifetimeSeconds) throw new Error('JWT_EXPIRES_IN must be a positive duration such as 180d, 12h, or 30m.')
 const maxBodyBytes = 1024 * 1024
 let pendingWrite = Promise.resolve()
 const depositNetworks = {
@@ -92,15 +96,37 @@ function publicUser(user) {
   return safe
 }
 
+function parseDurationSeconds(value) {
+  const match = typeof value === 'string' && value.match(/^(\d+)(s|m|h|d)$/)
+  if (!match || Number(match[1]) < 1) return 0
+  return Number(match[1]) * ({ s: 1, m: 60, h: 3600, d: 86400 }[match[2]])
+}
+
+function signJwt(user) {
+  const now = Math.floor(Date.now() / 1000)
+  const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url')
+  const unsigned = `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode({ sub: user.id, iat: now, exp: now + sessionLifetimeSeconds })}`
+  const signature = createHmac('sha256', jwtSecret).update(unsigned).digest('base64url')
+  return `${unsigned}.${signature}`
+}
+
 function authenticate(request) {
   const token = request.headers.authorization?.match(/^Bearer\s+(.+)$/i)?.[1]
-  if (!token) return null
-  const session = sessions.get(token)
-  if (!session || session.expiresAt <= Date.now()) {
-    sessions.delete(token)
-    return null
-  }
-  return session.userId
+  if (!token || revokedTokens.has(token)) return null
+  const parts = token.split('.')
+  if (parts.length !== 3) return null
+  const unsigned = `${parts[0]}.${parts[1]}`
+  const expected = createHmac('sha256', jwtSecret).update(unsigned).digest()
+  let header, payload, actual
+  try {
+    header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'))
+    payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'))
+    actual = Buffer.from(parts[2], 'base64url')
+  } catch { return null }
+  if (header.alg !== 'HS256' || actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null
+  const now = Math.floor(Date.now() / 1000)
+  if (typeof payload.sub !== 'string' || !Number.isFinite(payload.exp) || payload.exp <= now) return null
+  return payload.sub
 }
 
 function validEmail(email) { return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) }
@@ -137,9 +163,8 @@ async function route(request, response) {
     if (user.status === 'banned') return send(response, 403, { error: 'Your account has been banned. Please contact support for assistance.' })
     if (user.status === 'suspended') return send(response, 403, { error: 'Your account is suspended. Please contact support for assistance.' })
     if (user.status === 'rejected') return send(response, 403, { error: 'Your account application was rejected. Please contact support for assistance.' })
-    const token = randomBytes(32).toString('base64url')
-    sessions.set(token, { userId: user.id, expiresAt: Date.now() + sessionLifetimeMs })
-    return send(response, 200, { token, expiresIn: sessionLifetimeMs / 1000, user: publicUser(user) })
+    const token = signJwt(user)
+    return send(response, 200, { token, expiresIn: sessionLifetimeSeconds, user: publicUser(user) })
   }
 
   const userId = authenticate(request)
@@ -165,7 +190,7 @@ async function route(request, response) {
   }
   if (method === 'POST' && url.pathname === '/api/auth/logout') {
     const token = request.headers.authorization.match(/^Bearer\s+(.+)$/i)[1]
-    sessions.delete(token)
+    if (token) revokedTokens.add(token)
     return send(response, 200, { status: 'signed_out' })
   }
   if (url.pathname.startsWith('/api/admin/')) {
@@ -233,7 +258,6 @@ async function route(request, response) {
       const deleted = await usersCollection.deleteOne({ id: target.id })
       if (!deleted.deletedCount) return send(response, 404, { error: 'User was not found in MongoDB.' })
       database.users.splice(targetIndex, 1)
-      for (const [token, session] of sessions) if (session.userId === target.id) sessions.delete(token)
       return send(response, 200, { deleted: true, userId: target.id })
     }
     if (method === 'PATCH' && match) {

@@ -10,11 +10,17 @@ Requires Node.js 20 or newer.
 npm start
 ```
 
+`npm start` uses environment variables supplied by the host, as Render does. For local use with `backend/.env`, run `npm run start:local` (or `npm run dev`). Add production settings in Render's Environment page; do not upload `.env`.
+
 The API listens on `http://localhost:4000` by default. Set `PORT` to change it. `FRONTEND_ORIGIN` controls the one allowed browser origin (defaults to `http://localhost:5173`). Set `MONGODB_URI` to your MongoDB Atlas connection string. The API uses the URI's database name, or `bluevault` if none is specified, and creates a `users` collection with a unique email index automatically.
+
+### Configure JWT authentication
+
+Set `JWT_SECRET` to a random secret (at least 32 characters recommended) and `JWT_EXPIRES_IN` to a duration such as `180d`. Login tokens are signed HS256 JWTs and expire according to that setting (default `180d`). Logout revokes tokens for the lifetime of the server process.
 
 ### Configure the first administrator
 
-The start scripts load `backend/.env` using Node's built-in env-file support. Copy `.env.example` to `.env`, then set a unique `ADMIN_EMAIL` and `ADMIN_PASSWORD` of 12–128 characters. `ADMIN_NAME`, `PORT`, and `FRONTEND_ORIGIN` are also configurable. On startup, the server creates or refreshes that admin account. Keep `.env` private; it is ignored by Git. The admin signs in through the same `/api/auth/login` endpoint as users, and the response includes `user.role: "admin"`.
+For local use, load `backend/.env` with `npm run start:local` or `npm run dev`. Copy `.env.example` to `.env`, then set a unique `ADMIN_EMAIL` and `ADMIN_PASSWORD` of 12–128 characters. `ADMIN_NAME`, `PORT`, and `FRONTEND_ORIGIN` are also configurable. On startup, the server creates or refreshes that admin account. Keep `.env` private; it is ignored by Git. The admin signs in through the same `/api/auth/login` endpoint as users, and the response includes `user.role: "admin"`.
 
 PowerShell example (the values apply only to this terminal session):
 
@@ -51,7 +57,7 @@ All request and response bodies use JSON. Authenticated routes require `Authoriz
 
 Admin wallet settings may include `depositAddresses`, an object keyed by asset ticker (for example, `SOL: { "address": "...", "network": "Solana" }`). Each supported asset keeps its own address and network. Existing `depositAddress`, `depositAsset`, and `network` values remain supported as a fallback for the asset they identify.
 
-Registration creates an approved user account. Activity is always scoped to the authenticated account. Tokens expire after 12 hours; passwords are stored as scrypt hashes with unique random salts. Suspended accounts cannot sign in. Admin credentials are provisioned from environment variables and are never accepted through public registration.
+Registration creates an approved user account. Activity is always scoped to the authenticated account. Tokens expire according to `JWT_EXPIRES_IN`; passwords are stored as scrypt hashes with unique random salts. Suspended accounts cannot sign in. Admin credentials are provisioned from environment variables and are never accepted through public registration.
 
 ## System design
 
