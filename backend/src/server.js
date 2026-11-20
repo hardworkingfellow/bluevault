@@ -3,8 +3,12 @@ import { createHmac, randomBytes, randomUUID, scrypt as scryptCallback, timingSa
 import { promisify } from 'node:util'
 import { MongoClient } from 'mongodb'
 
+const mongoUri = process.env.MONGODB_URI?.trim()
+if (!mongoUri) throw new Error('MONGODB_URI is not configured. Set it in backend/.env to a MongoDB connection string.')
+if (!/^mongodb(?:\+srv)?:\/\//i.test(mongoUri)) throw new Error('MONGODB_URI must start with mongodb:// or mongodb+srv://.')
+
 const scrypt = promisify(scryptCallback)
-const mongoClient = new MongoClient(process.env.MONGODB_URI || '')
+const mongoClient = new MongoClient(mongoUri)
 let usersCollection
 const allowedOrigin = process.env.FRONTEND_ORIGIN || 'http://localhost:5173'
 const revokedTokens = new Set()
@@ -23,9 +27,8 @@ const depositNetworks = {
 }
 
 async function loadDatabase() {
-  if (!process.env.MONGODB_URI) throw new Error('MONGODB_URI must be set to connect to MongoDB.')
   await mongoClient.connect()
-  const databaseName = new URL(process.env.MONGODB_URI).pathname.slice(1) || 'bluevault'
+  const databaseName = new URL(mongoUri).pathname.slice(1) || 'bluevault'
   usersCollection = mongoClient.db(databaseName).collection('users')
   await usersCollection.createIndex({ email: 1 }, { unique: true })
   const users = await usersCollection.find({}, { projection: { _id: 0 } }).sort({ id: 1 }).toArray()

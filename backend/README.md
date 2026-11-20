@@ -12,7 +12,7 @@ npm start
 
 `npm start` uses environment variables supplied by the host, as Render does. For local use with `backend/.env`, run `npm run start:local` (or `npm run dev`). Add production settings in Render's Environment page; do not upload `.env`.
 
-The API listens on `http://localhost:4000` by default. Set `PORT` to change it. `FRONTEND_ORIGIN` controls the one allowed browser origin (defaults to `http://localhost:5173`). Set `MONGODB_URI` to your MongoDB Atlas connection string. The API uses the URI's database name, or `bluevault` if none is specified, and creates a `users` collection with a unique email index automatically.
+The API listens on `http://localhost:4000` by default. Set `PORT` to change it. `FRONTEND_ORIGIN` controls the one allowed browser origin (defaults to `http://localhost:5173`). Set `MONGODB_URI` to your MongoDB Atlas connection string, which must start with `mongodb+srv://` or `mongodb://`. When using `.env.example`, replace its sample URI and credentials with your actual MongoDB connection string. The API uses the URI's database name, or `bluevault` if none is specified, and creates a `users` collection with a unique email index automatically.
 
 ### Configure JWT authentication
 
