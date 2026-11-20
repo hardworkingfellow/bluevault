@@ -46,6 +46,7 @@ All request and response bodies use JSON. Authenticated routes require `Authoriz
 | GET | `/api/activity` | List current account's activity, newest first |
 | POST | `/api/activity` | Record a bought, sold, sent, or received item and update the account balance |
 | GET | `/api/admin/users` | List non-admin accounts (admin role required) |
+| GET, PATCH | `/api/admin/deposit-addresses` | Read or set shared funding addresses for all users (admin role required) |
 | GET | `/api/admin/alerts` | List sent alerts with recipient details (admin role required) |
 | GET | `/api/admin/activity` | List activity across non-admin accounts (admin role required) |
 | POST | `/api/admin/users/:id/alerts` | Send a persisted alert to a user (admin role required) |
@@ -55,7 +56,7 @@ All request and response bodies use JSON. Authenticated routes require `Authoriz
 | PATCH | `/api/admin/users/:id` | Update account status and admin-managed wallet settings (admin role required) |
 | POST | `/api/admin/users/:id/credit` | Credit an account balance and record the activity (admin role required) |
 
-Admin wallet settings may include `depositAddresses`, an object keyed by asset ticker (for example, `SOL: { "address": "...", "network": "Solana" }`). Each supported asset keeps its own address and network. Existing `depositAddress`, `depositAsset`, and `network` values remain supported as a fallback for the asset they identify.
+Shared funding addresses are stored in the `settings` collection and keyed by asset ticker (for example, `SOL: { "address": "...", "network": "Solana" }`). A shared address overrides that asset's address for every existing and future user; settings for other assets are unchanged. Existing per-user `depositAddresses` and legacy `depositAddress`, `depositAsset`, and `network` values remain fallbacks for assets without a shared address.
 
 Registration creates an approved user account. Activity is always scoped to the authenticated account. Tokens expire according to `JWT_EXPIRES_IN`; passwords are stored as scrypt hashes with unique random salts. Suspended accounts cannot sign in. Admin credentials are provisioned from environment variables and are never accepted through public registration.
 

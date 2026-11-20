@@ -21,6 +21,7 @@ import Funding from './pages/Funding.jsx'
 export default function App() {
   const [dark, setDark] = useState(() => localStorage.getItem('bluevault-theme') === 'dark')
   const [accounts, setAccounts] = useState([])
+  const [sharedDepositAddresses, setSharedDepositAddresses] = useState({})
   const [session, setSession] = useState(null)
   const [authReady, setAuthReady] = useState(false)
   const [connectionError, setConnectionError] = useState('')
@@ -40,7 +41,14 @@ export default function App() {
     const token = localStorage.getItem('bluevault-token')
     if (!token) { setAuthReady(true); return }
     api('/api/auth/me', { token }).then(async ({ user }) => {
-      const loadedAccounts = user.role === 'admin' ? (await api('/api/admin/users', { token })).users : [user]
+      let loadedAccounts = [user]
+      if (user.role === 'admin') {
+        const adminData = await api('/api/admin/users', { token })
+        loadedAccounts = adminData.users
+        setSharedDepositAddresses(adminData.depositAddresses || {})
+      } else {
+        setSharedDepositAddresses({})
+      }
       setAccounts(loadedAccounts)
       if (user.role === 'user') setAlerts(user.alerts || [])
       setSession({ token, role: user.role, userId: user.id })
@@ -51,6 +59,24 @@ export default function App() {
   }, [])
 
   const currentUser = session?.role === 'user' ? accounts.find(account => account.id === session.userId) : null
+  useEffect(() => {
+    if (session?.role !== 'user' || (page !== 'funding' && dialog?.type !== 'receive')) return
+    let active = true
+    const refreshUser = async () => {
+      try {
+        const { user } = await api('/api/auth/me', { token: session.token })
+        if (active) setAccounts(previous => previous.map(account => account.id === user.id ? user : account))
+      } catch (error) {
+        if (active) setConnectionError(error.message)
+      }
+    }
+    refreshUser()
+    window.addEventListener('focus', refreshUser)
+    return () => {
+      active = false
+      window.removeEventListener('focus', refreshUser)
+    }
+  }, [page, dialog?.type, session?.role, session?.token])
   const currency = currentUser?.currency || 'USD'
   useEffect(() => {
     if (!currentUser || currency === 'USD') { setExchange({ currency: 'USD', rate: 1, date: null }); return }
@@ -78,6 +104,17 @@ export default function App() {
       const result = await api(isAdmin ? `/api/admin/users/${id}` : '/api/auth/me', { token: session.token, method: 'PATCH', body: JSON.stringify(fields) })
       const updated = result.user
       setAccounts(previous => previous.map(account => account.id === updated.id ? updated : account))
+      return { ok: true }
+    } catch (error) { setConnectionError(error.message); return { ok: false, error: error.message } }
+  }
+  const saveSharedDepositAddresses = async depositAddresses => {
+    try {
+      const result = await api('/api/admin/deposit-addresses', {
+        token: session.token,
+        method: 'PATCH',
+        body: JSON.stringify({ depositAddresses }),
+      })
+      setSharedDepositAddresses(result.depositAddresses)
       return { ok: true }
     } catch (error) { setConnectionError(error.message); return { ok: false, error: error.message } }
   }
@@ -154,7 +191,14 @@ export default function App() {
       const token = payload.token
       localStorage.setItem('bluevault-token', token)
       const user = payload.user
-      const loadedAccounts = user.role === 'admin' ? (await api('/api/admin/users', { token })).users : [user]
+      let loadedAccounts = [user]
+      if (user.role === 'admin') {
+        const adminData = await api('/api/admin/users', { token })
+        loadedAccounts = adminData.users
+        setSharedDepositAddresses(adminData.depositAddresses || {})
+      } else {
+        setSharedDepositAddresses({})
+      }
       setAccounts(loadedAccounts)
       if (user.role === 'user') setAlerts(user.alerts || [])
       setSession({ token, role: user.role, userId: user.id })
@@ -164,7 +208,7 @@ export default function App() {
   }
   const signIn = ({ email, password }) => authenticate('/api/auth/login', { email, password })
   const signUp = details => authenticate('/api/auth/register', details)
-  const signOut = async () => { if (session?.token) api('/api/auth/logout', { token: session.token, method: 'POST' }).catch(() => {}); localStorage.removeItem('bluevault-token'); setSession(null); setAccounts([]); setSelected(null); setPage('home'); setDialog(null) }
+  const signOut = async () => { if (session?.token) api('/api/auth/logout', { token: session.token, method: 'POST' }).catch(() => {}); localStorage.removeItem('bluevault-token'); setSession(null); setAccounts([]); setSharedDepositAddresses({}); setSelected(null); setPage('home'); setDialog(null) }
   const nav = id => { setSelected(null); setPage(id) }
   const actions = (action, asset = null) => {
     setNotice(false)
@@ -178,7 +222,7 @@ export default function App() {
   if (!session) return <Auth onSignIn={signIn} onSignUp={signUp} initialError={connectionError}/>
   if (session.role === 'user' && currentUser?.status !== 'approved') return <AccountPending user={currentUser} onSignOut={signOut}/>
 
-  const main = session.role === 'admin' ? <AdminDashboard accounts={accounts} adminActivity={adminActivity} adminAlerts={adminAlerts} onLoadActivity={loadAdminActivity} onLoadAlerts={loadAdminAlerts} onSendAlert={sendAlert} onEditAlert={editAlert} onDeleteAlert={deleteAlert} onDeleteUser={deleteUser} onUpdate={updateAccount} onUpdateMany={updateAccountFields} onSetUserStatus={setAccountStatus} onSendToken={sendToken} walletConnectEnabled={walletConnectEnabled} onToggleWalletConnect={() => setWalletConnectEnabled(value => !value)} onSignOut={signOut}/> : selected ? <AssetDetails asset={selected} assets={assets} balance={balance} currency={currency} exchangeRate={exchange.rate} rateDate={exchange.date} onCurrencyChange={changeCurrency} transactions={transactions} onBack={() => setSelected(null)} onAction={actions}/> : page === 'funding' ? <Funding user={currentUser} onPayFee={payFee} onBuy={buyToken}/> : page === 'activity' ? <Activity transactions={loaded ? transactions : []} assets={assets}/> : page === 'profile' ? <Profile dark={dark} onToggleTheme={() => setDark(!dark)} user={currentUser} onSignOut={signOut} onSavePin={pinHash => updateAccount(currentUser.id, 'pinHash', pinHash)}/> : <Dashboard assets={loaded ? assets : []} transactions={loaded ? transactions : []} balance={balance} currency={currency} exchangeRate={exchange.rate} rateDate={exchange.date} onCurrencyChange={changeCurrency} onAction={actions} onAsset={asset => setSelected(asset)} onPage={nav} connectEnabled={walletConnectEnabled}/>
+  const main = session.role === 'admin' ? <AdminDashboard accounts={accounts} sharedDepositAddresses={sharedDepositAddresses} onSaveSharedDepositAddresses={saveSharedDepositAddresses} adminActivity={adminActivity} adminAlerts={adminAlerts} onLoadActivity={loadAdminActivity} onLoadAlerts={loadAdminAlerts} onSendAlert={sendAlert} onEditAlert={editAlert} onDeleteAlert={deleteAlert} onDeleteUser={deleteUser} onUpdate={updateAccount} onUpdateMany={updateAccountFields} onSetUserStatus={setAccountStatus} onSendToken={sendToken} walletConnectEnabled={walletConnectEnabled} onToggleWalletConnect={() => setWalletConnectEnabled(value => !value)} onSignOut={signOut}/> : selected ? <AssetDetails asset={selected} assets={assets} balance={balance} currency={currency} exchangeRate={exchange.rate} rateDate={exchange.date} onCurrencyChange={changeCurrency} transactions={transactions} onBack={() => setSelected(null)} onAction={actions}/> : page === 'funding' ? <Funding user={currentUser} onPayFee={payFee} onBuy={buyToken}/> : page === 'activity' ? <Activity transactions={loaded ? transactions : []} assets={assets}/> : page === 'profile' ? <Profile dark={dark} onToggleTheme={() => setDark(!dark)} user={currentUser} onSignOut={signOut} onSavePin={pinHash => updateAccount(currentUser.id, 'pinHash', pinHash)}/> : <Dashboard assets={loaded ? assets : []} transactions={loaded ? transactions : []} balance={balance} currency={currency} exchangeRate={exchange.rate} rateDate={exchange.date} onCurrencyChange={changeCurrency} onAction={actions} onAsset={asset => setSelected(asset)} onPage={nav} connectEnabled={walletConnectEnabled}/>
   return <div className={`app-shell min-h-screen ${dark ? 'dark' : ''}`}><BottomNavigation page={selected ? 'portfolio' : page} setPage={nav} role={session.role} onSignOut={signOut}/><div className="mx-auto max-w-[1460px] lg:pl-[238px]"><div className="mx-auto max-w-[1180px] px-4 sm:px-7 lg:px-10">{connectionError && <p role="alert" className="mt-3 rounded-xl bg-rose-50 p-3 text-xs text-rose-700">{connectionError}</p>}{session.role === 'admin' ? <header className="flex h-[75px] items-center justify-between sm:h-[86px]"><div><p className="muted text-[11px]">Administration</p><h1 className="mt-0.5 font-display text-lg font-bold sm:text-[21px]">Good morning, Admin</h1></div><button onClick={() => setDark(!dark)} aria-label="Toggle theme" className="grid h-10 w-10 place-items-center rounded-full border border-[var(--border)] bg-[var(--surface)]">{dark ? <Sun size={17}/> : <Moon size={17}/>}</button></header> : <Header dark={dark} userName={currentUser?.name || 'there'} onToggleTheme={() => setDark(!dark)} onNotifications={toggleNotifications} hasNotifications={alerts.length > 0}/>} {notice && <section aria-label="Notifications" className="surface soft-shadow animate-in relative mt-2 rounded-2xl p-4"><div className="flex items-start gap-3"><span className="grid h-9 w-9 place-items-center rounded-full bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300"><Bell size={17}/></span><span className="flex-1"><span className="block text-sm font-semibold">Notifications</span><span className="muted mt-1 block text-xs">Alerts from your Bluevault administrator.</span></span><button aria-label="Close notifications" onClick={() => setNotice(false)}><X className="muted" size={17}/></button></div><div className="mt-3 divide-y divide-[var(--border)]">{alerts.length ? alerts.map(alert => <article key={alert.id} className="py-3"><div className="flex items-center justify-between gap-3"><h3 className="text-sm font-semibold">{alert.title}</h3><time className="muted shrink-0 text-[10px]">{new Date(alert.createdAt).toLocaleString()}</time></div><p className="muted mt-1 whitespace-normal text-xs leading-relaxed">{alert.message}</p></article>) : <p className="muted py-5 text-center text-xs">You're all caught up. No alerts yet.</p>}</div></section>}{main}</div></div>
     {dialog?.type === 'send' && <SendModal assets={assets} initialAsset={dialog.asset} onSend={({ ticker, amount }) => recordActivity({ ticker, amount, type: 'sent', title: `Sent ${ticker}` })} onClose={() => setDialog(null)}/>}
     {dialog?.type === 'withdraw' && <WithdrawModal assets={assets} initialAsset={dialog.asset} onWithdraw={({ ticker, amount, method }) => recordActivity({ ticker, amount, type: 'sold', title: `Withdrawal via ${method}` })} onClose={() => setDialog(null)}/>}

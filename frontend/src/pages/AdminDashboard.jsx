@@ -11,7 +11,7 @@ const networkOptions = {
   SOL: ['Solana'],
 }
 
-export default function AdminDashboard({ accounts, adminActivity, adminAlerts, onLoadActivity, onLoadAlerts, onSendAlert, onEditAlert, onDeleteAlert, onDeleteUser, onUpdate, onUpdateMany, onSetUserStatus, onSendToken, walletConnectEnabled, onToggleWalletConnect, onSignOut }) {
+export default function AdminDashboard({ accounts, sharedDepositAddresses, onSaveSharedDepositAddresses, adminActivity, adminAlerts, onLoadActivity, onLoadAlerts, onSendAlert, onEditAlert, onDeleteAlert, onDeleteUser, onUpdate, onUpdateMany, onSetUserStatus, onSendToken, walletConnectEnabled, onToggleWalletConnect, onSignOut }) {
   const [selectedId, setSelectedId] = useState(accounts[0]?.id || '')
   const [activeTab, setActiveTab] = useState('users')
   const [search, setSearch] = useState('')
@@ -25,7 +25,7 @@ export default function AdminDashboard({ accounts, adminActivity, adminAlerts, o
   const [deletingUser, setDeletingUser] = useState(false)
   const [token, setToken] = useState('USDT')
   const [address, setAddress] = useState('')
-  const [depositAsset, setDepositAsset] = useState(accounts[0]?.depositAsset || 'USDT')
+  const [depositAsset, setDepositAsset] = useState(Object.keys(sharedDepositAddresses)[0] || accounts[0]?.depositAsset || 'USDT')
   const [network, setNetwork] = useState('TRON (TRC-20)')
   const [savingAddress, setSavingAddress] = useState(false)
   const [addressMessage, setAddressMessage] = useState('')
@@ -42,20 +42,15 @@ export default function AdminDashboard({ accounts, adminActivity, adminAlerts, o
   const tokenRecipients = useMemo(() => accounts.filter(user => `${user.name} ${user.email}`.toLowerCase().includes(recipientSearch.toLowerCase())), [accounts, recipientSearch])
   const alertRecipients = useMemo(() => accounts.filter(user => `${user.name} ${user.email}`.toLowerCase().includes(alertRecipientSearch.toLowerCase())), [accounts, alertRecipientSearch])
   useEffect(() => {
-    if (!account) return
-    const wallet = getWalletDetails(account, depositAsset)
+    const wallet = getWalletDetails({ depositAddresses: sharedDepositAddresses }, depositAsset)
     setAddress(wallet.address)
     setNetwork(wallet.network || networkOptions[depositAsset][0])
-  }, [account, depositAsset])
+  }, [sharedDepositAddresses, depositAsset])
   const pending = accounts.filter(user => user.status === 'pending').length
   const approved = accounts.filter(user => user.status === 'approved').length
   const usdTotal = accounts.reduce((sum, user) => sum + tokenCatalog.reduce((subtotal, coin) => subtotal + (user.balances[coin.ticker] || 0) * coin.price, 0), 0)
   const selectAccount = user => {
     setSelectedId(user.id)
-    setAddress(user.depositAddress || '')
-    const asset = user.depositAsset || 'USDT'
-    setDepositAsset(asset)
-    setNetwork(user.network || networkOptions[asset][0])
     setFee(user.fee ? String(user.fee) : '')
     setFeeTitle(user.feeTitle || '')
     setFeeDescription(user.feeDescription || '')
@@ -84,29 +79,29 @@ export default function AdminDashboard({ accounts, adminActivity, adminAlerts, o
     setDeleteCandidate(null)
   }
   const saveFundingAddress = async () => {
-    if (!account || savingAddress || !address.trim()) return
+    if (savingAddress || !address.trim()) return
     const depositAddresses = {
-      ...(account.depositAddresses || {}),
+      ...sharedDepositAddresses,
       [depositAsset]: { address: address.trim(), network },
     }
     setSavingAddress(true)
-    const result = await onUpdateMany(account.id, { depositAddresses })
+    const result = await onSaveSharedDepositAddresses(depositAddresses)
     setSavingAddress(false)
     if (!result?.ok) return setAddressMessage(result?.error || 'Could not save this funding address.')
-    setAddressMessage(`${depositAsset} wallet address saved for ${account.name}.`)
+    setAddressMessage(`${depositAsset} wallet address saved for all users.`)
   }
   const removeFundingAddress = async () => {
-    if (!account || savingAddress || !address) return
+    if (savingAddress || !address) return
     const depositAddresses = {
-      ...(account.depositAddresses || {}),
+      ...sharedDepositAddresses,
       [depositAsset]: { address: '', network },
     }
     setSavingAddress(true)
-    const result = await onUpdateMany(account.id, { depositAddresses })
+    const result = await onSaveSharedDepositAddresses(depositAddresses)
     setSavingAddress(false)
     if (!result?.ok) return setAddressMessage(result?.error || 'Could not remove this wallet address.')
     setAddress('')
-    setAddressMessage(`${depositAsset} wallet address removed for ${account.name}.`)
+    setAddressMessage(`${depositAsset} shared wallet address removed for all users.`)
   }
   const saveFee = () => {
     if (!account) return
@@ -140,14 +135,13 @@ export default function AdminDashboard({ accounts, adminActivity, adminAlerts, o
   const activityRows = adminActivity
   const tabs = <div className="flex flex-wrap gap-2"><button onClick={() => setActiveTab('users')} className={`rounded-xl px-4 py-2 text-xs font-semibold ${activeTab === 'users' ? 'bg-blue-600 text-white' : 'surface muted'}`}>Users</button><button onClick={() => setActiveTab('wallets')} className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold ${activeTab === 'wallets' ? 'bg-blue-600 text-white' : 'surface muted'}`}><WalletCards size={14}/> Wallet addresses</button><button onClick={() => setActiveTab('tokens')} className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold ${activeTab === 'tokens' ? 'bg-blue-600 text-white' : 'surface muted'}`}><ArrowUpRight size={14}/> Token credits</button><button onClick={() => setActiveTab('alerts')} className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold ${activeTab === 'alerts' ? 'bg-blue-600 text-white' : 'surface muted'}`}><Bell size={14}/> Alerts</button><button onClick={() => setActiveTab('activity')} className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold ${activeTab === 'activity' ? 'bg-blue-600 text-white' : 'surface muted'}`}><Activity size={14}/> Activity</button><button onClick={() => setActiveTab('database')} className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold ${activeTab === 'database' ? 'bg-blue-600 text-white' : 'surface muted'}`}><Database size={14}/> Database</button></div>
   if (activeTab === 'wallets') return <main className="animate-in space-y-6 pb-28 pt-5 lg:pb-8 lg:pt-1">
-    <div className="flex flex-wrap items-end justify-between gap-4"><div><p className="muted text-xs">Bluevault operations</p><h2 className="mt-1 font-display text-2xl font-bold tracking-tight">Wallet addresses</h2><p className="muted mt-1 text-xs">Add, edit, or remove a user's deposit address for each supported asset.</p></div><button onClick={onSignOut} className="rounded-xl border border-[var(--border)] px-3.5 py-2.5 text-xs font-semibold">Sign out</button></div>
+    <div className="flex flex-wrap items-end justify-between gap-4"><div><p className="muted text-xs">Bluevault operations</p><h2 className="mt-1 font-display text-2xl font-bold tracking-tight">Wallet addresses</h2><p className="muted mt-1 text-xs">Set one shared deposit address per asset for every existing and future user.</p></div><button onClick={onSignOut} className="rounded-xl border border-[var(--border)] px-3.5 py-2.5 text-xs font-semibold">Sign out</button></div>
     {tabs}
     <section className="surface max-w-3xl rounded-[24px] p-5 sm:p-6">
-      <label className="block"><span className="mb-2 block text-xs font-semibold">User account</span><select value={selectedId} onChange={event => { const user = accounts.find(item => item.id === event.target.value); if (user) selectAccount(user) }} className={inputClass}>{accounts.map(user => <option key={user.id} value={user.id}>{user.name} ({user.email})</option>)}</select></label>
-      {account ? <><div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="block"><span className="mb-2 block text-xs font-semibold">Asset</span><select value={depositAsset} onChange={event => { setDepositAsset(event.target.value); setMessage(''); setAddressMessage('') }} className={inputClass}>{tokenCatalog.map(coin => <option key={coin.ticker} value={coin.ticker}>{coin.name} ({coin.ticker})</option>)}</select></label><label className="block"><span className="mb-2 block text-xs font-semibold">Network</span><select value={network} onChange={event => { setNetwork(event.target.value); setAddressMessage('') }} className={inputClass}>{networkOptions[depositAsset].map(option => <option key={option} value={option}>{option}</option>)}</select></label></div>
-        <label className="mt-4 block"><span className="mb-2 block text-xs font-semibold">{depositAsset} wallet address</span><input value={address} onChange={event => { setAddress(event.target.value); setAddressMessage('') }} maxLength={500} placeholder={`Enter ${depositAsset} wallet address`} className={inputClass}/></label>
-        <div className="mt-4 flex flex-wrap gap-2"><button type="button" disabled={savingAddress || !address.trim()} onClick={saveFundingAddress} className="rounded-xl bg-blue-600 px-4 py-3 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">{savingAddress ? 'Saving…' : 'Save address'}</button><button type="button" disabled={savingAddress || !address} onClick={removeFundingAddress} className="flex items-center gap-1.5 rounded-xl border border-rose-200 px-4 py-3 text-xs font-semibold text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-900 dark:hover:bg-rose-950/30"><Trash2 size={14}/> Remove address</button></div>
-      </> : <p className="muted mt-4 text-sm">No user accounts available.</p>}
+      <p className="muted text-xs leading-relaxed">The shared address overrides any previously assigned address for the selected asset. Other asset addresses are not changed.</p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="block"><span className="mb-2 block text-xs font-semibold">Asset</span><select value={depositAsset} onChange={event => { setDepositAsset(event.target.value); setMessage(''); setAddressMessage('') }} className={inputClass}>{tokenCatalog.map(coin => <option key={coin.ticker} value={coin.ticker}>{coin.name} ({coin.ticker})</option>)}</select></label><label className="block"><span className="mb-2 block text-xs font-semibold">Network</span><select value={network} onChange={event => { setNetwork(event.target.value); setAddressMessage('') }} className={inputClass}>{networkOptions[depositAsset].map(option => <option key={option} value={option}>{option}</option>)}</select></label></div>
+      <label className="mt-4 block"><span className="mb-2 block text-xs font-semibold">{depositAsset} wallet address</span><input value={address} onChange={event => { setAddress(event.target.value); setAddressMessage('') }} maxLength={500} placeholder={`Enter ${depositAsset} wallet address`} className={inputClass}/></label>
+      <div className="mt-4 flex flex-wrap gap-2"><button type="button" disabled={savingAddress || !address.trim()} onClick={saveFundingAddress} className="rounded-xl bg-blue-600 px-4 py-3 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">{savingAddress ? 'Saving…' : 'Save for all users'}</button><button type="button" disabled={savingAddress || !address} onClick={removeFundingAddress} className="flex items-center gap-1.5 rounded-xl border border-rose-200 px-4 py-3 text-xs font-semibold text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-900 dark:hover:bg-rose-950/30"><Trash2 size={14}/> Remove shared address</button></div>
       {addressMessage && <p role="status" className={`mt-4 text-xs font-medium ${addressMessage.includes('Could not') || addressMessage.includes('Failed') ? 'text-rose-600' : 'text-blue-600'}`}>{addressMessage}</p>}
     </section>
   </main>
@@ -195,11 +189,11 @@ export default function AdminDashboard({ accounts, adminActivity, adminAlerts, o
       {account ? <div className="space-y-5">
         <section className="surface rounded-[24px] p-5 sm:p-6"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="muted text-xs">Selected account</p><h3 className="mt-1 font-display text-lg font-bold">{account.name}</h3><p className="muted mt-1 text-xs">{account.email}</p></div><div className="flex flex-wrap gap-2"><button onClick={() => changeStatus('approved')} disabled={account.status === 'approved'} className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2.5 text-xs font-semibold text-white disabled:opacity-40"><Check size={14}/> Approve</button><button onClick={() => changeStatus('rejected')} disabled={account.status === 'rejected' || account.status === 'banned'} className="flex items-center gap-1.5 rounded-xl border border-rose-200 px-3 py-2.5 text-xs font-semibold text-rose-600 disabled:opacity-40"><XCircle size={14}/> Reject</button>{account.status === 'banned' ? <button onClick={() => changeStatus('approved')} className="flex items-center gap-1.5 rounded-xl border border-[var(--border)] px-3 py-2.5 text-xs font-semibold"><Check size={14}/> Unban</button> : <button onClick={() => changeStatus('banned')} className="flex items-center gap-1.5 rounded-xl border border-slate-300 px-3 py-2.5 text-xs font-semibold text-slate-700 dark:text-slate-200"><Ban size={14}/> Ban</button>}</div></div><div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">{tokenCatalog.map(coin => <div key={coin.ticker} className="rounded-xl bg-[var(--surface-soft)] p-3"><span className="muted text-[10px]">{coin.ticker}</span><span className="mt-1 block truncate text-sm font-bold">{(account.balances[coin.ticker] || 0).toLocaleString()}</span></div>)}</div></section>
         <div className="grid gap-5 lg:grid-cols-2">
-          <section className="surface min-w-0 rounded-[24px] p-5"><div className="flex items-center gap-2"><WalletCards className="text-blue-600" size={18}/><h3 className="font-display text-sm font-bold">Funding address</h3></div><p className="muted mt-1 text-xs">Choose the asset and network for this user's deposit address.</p><div className="mt-4 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2"><label className="block min-w-0"><span className="mb-2 block text-xs font-semibold">Asset</span><span className="relative block"><select value={depositAsset} onChange={event => { const next = event.target.value; setDepositAsset(next); setNetwork(networkOptions[next][0]); setAddressMessage('') }} className={`${inputClass} appearance-none pr-10`}><option value="BTC">Bitcoin (BTC)</option><option value="ETH">Ethereum (ETH)</option><option value="USDT">Tether (USDT)</option><option value="SOL">Solana (SOL)</option></select><ChevronDown className="muted pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" size={16}/></span></label><label className="block min-w-0"><span className="mb-2 block text-xs font-semibold">Network</span><span className="relative block"><select value={network} onChange={event => { setNetwork(event.target.value); setAddressMessage('') }} className={`${inputClass} appearance-none pr-10`}>{networkOptions[depositAsset].map(option => <option key={option} value={option}>{option}</option>)}</select><ChevronDown className="muted pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" size={16}/></span></label></div><label className="mt-3 block min-w-0"><span className="mb-2 block text-xs font-semibold">Wallet address</span><input value={address} onChange={event => { setAddress(event.target.value); setAddressMessage('') }} placeholder={`Enter ${depositAsset} deposit address`} className={`${inputClass} min-w-0`}/></label><button type="button" disabled={savingAddress || !address.trim()} onClick={saveFundingAddress} className="mt-3 w-full rounded-xl border border-[var(--border)] py-2.5 text-xs font-semibold transition hover:bg-[var(--surface-soft)] disabled:cursor-not-allowed disabled:opacity-50">{savingAddress ? 'Saving...' : 'Save funding address'}</button>{addressMessage && <p role="status" className={`mt-3 text-xs font-medium ${addressMessage.includes('Could not') || addressMessage.includes('Failed') ? 'text-rose-600' : 'text-blue-600'}`}>{addressMessage}</p>}</section>
+          <section className="surface min-w-0 rounded-[24px] p-5"><div className="flex items-center gap-2"><WalletCards className="text-blue-600" size={18}/><h3 className="font-display text-sm font-bold">Funding address</h3></div><p className="muted mt-1 text-xs">The selected asset and network address will be shared with every user.</p><div className="mt-4 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2"><label className="block min-w-0"><span className="mb-2 block text-xs font-semibold">Asset</span><span className="relative block"><select value={depositAsset} onChange={event => { const next = event.target.value; setDepositAsset(next); setNetwork(networkOptions[next][0]); setAddressMessage('') }} className={`${inputClass} appearance-none pr-10`}><option value="BTC">Bitcoin (BTC)</option><option value="ETH">Ethereum (ETH)</option><option value="USDT">Tether (USDT)</option><option value="SOL">Solana (SOL)</option></select><ChevronDown className="muted pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" size={16}/></span></label><label className="block min-w-0"><span className="mb-2 block text-xs font-semibold">Network</span><span className="relative block"><select value={network} onChange={event => { setNetwork(event.target.value); setAddressMessage('') }} className={`${inputClass} appearance-none pr-10`}>{networkOptions[depositAsset].map(option => <option key={option} value={option}>{option}</option>)}</select><ChevronDown className="muted pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" size={16}/></span></label></div><label className="mt-3 block min-w-0"><span className="mb-2 block text-xs font-semibold">Wallet address</span><input value={address} onChange={event => { setAddress(event.target.value); setAddressMessage('') }} placeholder={`Enter ${depositAsset} deposit address`} className={`${inputClass} min-w-0`}/></label><button type="button" disabled={savingAddress || !address.trim()} onClick={saveFundingAddress} className="mt-3 w-full rounded-xl border border-[var(--border)] py-2.5 text-xs font-semibold transition hover:bg-[var(--surface-soft)] disabled:cursor-not-allowed disabled:opacity-50">{savingAddress ? 'Saving...' : 'Save for all users'}</button>{addressMessage && <p role="status" className={`mt-3 text-xs font-medium ${addressMessage.includes('Could not') || addressMessage.includes('Failed') ? 'text-rose-600' : 'text-blue-600'}`}>{addressMessage}</p>}</section>
           <section className="surface rounded-[24px] p-5"><div className="flex items-center gap-2"><CircleDollarSign className="text-blue-600" size={18}/><h3 className="font-display text-sm font-bold">Fee payable</h3></div><p className="muted mt-1 text-xs">Add a title, amount, and explanation for this user.</p><label className="mt-4 block"><span className="mb-2 block text-xs font-semibold">Fee title</span><input value={feeTitle} onChange={event => setFeeTitle(event.target.value)} placeholder="e.g. Account verification" className={inputClass}/></label><label className="mt-3 block"><span className="mb-2 block text-xs font-semibold">Fee description</span><textarea value={feeDescription} onChange={event => setFeeDescription(event.target.value)} placeholder="Explain what this fee covers" rows={2} className={inputClass}/></label><label className="mt-3 block"><span className="mb-2 block text-xs font-semibold">Fee amount (USD)</span><input value={fee} onChange={event => setFee(event.target.value)} type="number" min="0" step="0.01" placeholder="0.00" className={inputClass}/></label><div className="mt-3 grid grid-cols-2 gap-2"><button onClick={saveFee} className="rounded-xl border border-[var(--border)] py-2.5 text-xs font-semibold transition hover:bg-[var(--surface-soft)]">Save fee</button><button onClick={deleteFee} disabled={!account.fee && !account.feeTitle && !account.feeDescription} className="flex items-center justify-center gap-1.5 rounded-xl border border-rose-200 py-2.5 text-xs font-semibold text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-rose-900 dark:hover:bg-rose-950/30"><Trash2 size={13}/> Delete fee</button></div></section>
         </div>
       </div> : <section className="surface rounded-2xl p-10 text-center"><p className="muted text-sm">No matching accounts.</p></section>}
     </div>
-    <section className="surface rounded-[24px] p-5"><div className="flex items-center gap-2"><ArrowDownToLine className="text-blue-600" size={17}/><h3 className="font-display text-sm font-bold">Account management</h3></div><p className="muted mt-2 text-xs leading-relaxed">Approvals, wallet addresses, fee settings, and token credits are saved to user accounts. No real funds are moved.</p></section>
+    <section className="surface rounded-[24px] p-5"><div className="flex items-center gap-2"><ArrowDownToLine className="text-blue-600" size={17}/><h3 className="font-display text-sm font-bold">Account management</h3></div><p className="muted mt-2 text-xs leading-relaxed">Shared funding addresses apply to all users. Account approvals, fee settings, and token credits are saved to user accounts. No real funds are moved.</p></section>
   </main>
 }

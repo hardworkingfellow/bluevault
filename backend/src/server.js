@@ -10,6 +10,8 @@ if (!/^mongodb(?:\+srv)?:\/\//i.test(mongoUri)) throw new Error('MONGODB_URI mus
 const scrypt = promisify(scryptCallback)
 const mongoClient = new MongoClient(mongoUri)
 let usersCollection
+let settingsCollection
+let sharedDepositAddresses = {}
 const allowedOrigin = process.env.FRONTEND_ORIGIN || 'http://localhost:5173'
 const revokedTokens = new Set()
 const jwtSecret = process.env.JWT_SECRET
@@ -29,10 +31,15 @@ const depositNetworks = {
 async function loadDatabase() {
   await mongoClient.connect()
   const databaseName = new URL(mongoUri).pathname.slice(1) || 'bluevault'
-  usersCollection = mongoClient.db(databaseName).collection('users')
+  const mongoDatabase = mongoClient.db(databaseName)
+  usersCollection = mongoDatabase.collection('users')
+  settingsCollection = mongoDatabase.collection('settings')
   await usersCollection.createIndex({ email: 1 }, { unique: true })
-  const users = await usersCollection.find({}, { projection: { _id: 0 } }).sort({ id: 1 }).toArray()
-  return { version: 1, users }
+  const [users, addressSettings] = await Promise.all([
+    usersCollection.find({}, { projection: { _id: 0 } }).sort({ id: 1 }).toArray(),
+    settingsCollection.findOne({ _id: 'shared-deposit-addresses' }),
+  ])
+  return { version: 1, users, sharedDepositAddresses: addressSettings?.value || {} }
 }
 
 let database
@@ -62,6 +69,7 @@ async function seedConfiguredAdmin() {
 
 let databaseReady = loadDatabase().then(async data => {
   database = data
+  sharedDepositAddresses = data.sharedDepositAddresses
   await seedConfiguredAdmin()
 })
 
@@ -96,6 +104,9 @@ async function readJson(request) {
 
 function publicUser(user) {
   const { passwordHash, passwordSalt, ...safe } = user
+  if (user.role !== 'admin') {
+    safe.depositAddresses = { ...(safe.depositAddresses || {}), ...sharedDepositAddresses }
+  }
   return safe
 }
 
@@ -133,6 +144,17 @@ function authenticate(request) {
 }
 
 function validEmail(email) { return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) }
+
+function validateDepositAddresses(addresses) {
+  if (!addresses || typeof addresses !== 'object' || Array.isArray(addresses)) return 'Deposit addresses must be an asset-keyed object.'
+  for (const [ticker, wallet] of Object.entries(addresses)) {
+    if (!Object.hasOwn(depositNetworks, ticker) || !wallet || typeof wallet !== 'object' || Array.isArray(wallet)) return 'Deposit addresses contain an unsupported asset.'
+    if (Object.keys(wallet).some(field => !['address', 'network'].includes(field)) || typeof wallet.address !== 'string' || wallet.address.length > 500 || !depositNetworks[ticker].includes(wallet.network)) {
+      return `Provide a valid ${ticker} address and network.`
+    }
+  }
+  return null
+}
 
 async function route(request, response) {
   await databaseReady
@@ -198,6 +220,25 @@ async function route(request, response) {
   }
   if (url.pathname.startsWith('/api/admin/')) {
     if (user.role !== 'admin') return send(response, 403, { error: 'Administrator access required.' })
+    if (url.pathname === '/api/admin/deposit-addresses') {
+      if (method === 'GET') return send(response, 200, { depositAddresses: sharedDepositAddresses })
+      if (method === 'PATCH') {
+        const body = await readJson(request)
+        if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(field => field !== 'depositAddresses')) {
+          return send(response, 400, { error: 'Provide only a depositAddresses setting.' })
+        }
+        const validationError = validateDepositAddresses(body.depositAddresses)
+        if (validationError) return send(response, 400, { error: validationError })
+        await settingsCollection.updateOne(
+          { _id: 'shared-deposit-addresses' },
+          { $set: { value: body.depositAddresses, updatedAt: new Date().toISOString() } },
+          { upsert: true },
+        )
+        sharedDepositAddresses = body.depositAddresses
+        database.sharedDepositAddresses = sharedDepositAddresses
+        return send(response, 200, { depositAddresses: sharedDepositAddresses })
+      }
+    }
     if (method === 'GET' && url.pathname === '/api/admin/activity') {
       const activities = database.users.filter(account => account.role !== 'admin').flatMap(account =>
         (account.transactions || []).map(activity => ({ ...activity, userName: account.name, userEmail: account.email }))
@@ -205,7 +246,10 @@ async function route(request, response) {
       return send(response, 200, { activities })
     }
     if (method === 'GET' && url.pathname === '/api/admin/users') {
-      return send(response, 200, { users: database.users.filter(account => account.role !== 'admin').map(publicUser) })
+      return send(response, 200, {
+        users: database.users.filter(account => account.role !== 'admin').map(publicUser),
+        depositAddresses: sharedDepositAddresses,
+      })
     }
     if (method === 'GET' && url.pathname === '/api/admin/alerts') {
       const alerts = database.users.filter(account => account.role !== 'admin').flatMap(account =>
@@ -271,12 +315,8 @@ async function route(request, response) {
       if (Object.keys(body).some(field => !allowedFields.includes(field))) return send(response, 400, { error: 'Unsupported account setting.' })
       if (Object.hasOwn(body, 'status') && !['approved', 'pending', 'rejected', 'banned', 'suspended'].includes(body.status)) return send(response, 400, { error: 'Status must be approved, pending, rejected, or banned.' })
       if (Object.hasOwn(body, 'depositAddresses')) {
-        const addresses = body.depositAddresses
-        if (!addresses || typeof addresses !== 'object' || Array.isArray(addresses)) return send(response, 400, { error: 'Deposit addresses must be an asset-keyed object.' })
-        for (const [ticker, wallet] of Object.entries(addresses)) {
-          if (!Object.hasOwn(depositNetworks, ticker) || !wallet || typeof wallet !== 'object' || Array.isArray(wallet)) return send(response, 400, { error: 'Deposit addresses contain an unsupported asset.' })
-          if (Object.keys(wallet).some(field => !['address', 'network'].includes(field)) || typeof wallet.address !== 'string' || wallet.address.length > 500 || !depositNetworks[ticker].includes(wallet.network)) return send(response, 400, { error: `Provide a valid ${ticker} address and network.` })
-        }
+        const validationError = validateDepositAddresses(body.depositAddresses)
+        if (validationError) return send(response, 400, { error: validationError })
       }
       Object.assign(target, body)
       await persistDatabase(database)
