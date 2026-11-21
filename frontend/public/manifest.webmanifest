@@ -1,0 +1,20 @@
+{
+  "id": "/",
+  "name": "Bluevault Crypto Wallet",
+  "short_name": "Bluevault",
+  "description": "Bluevault cryptocurrency wallet dashboard",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f6f8fc",
+  "theme_color": "#f6f8fc",
+  "icons": [
+    {
+      "src": "/icons/bluevault.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
