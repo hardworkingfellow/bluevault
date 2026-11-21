@@ -1,5 +1,5 @@
-const CACHE_NAME = 'bluevault-shell-v1'
-const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icons/bluevault.svg']
+const CACHE_NAME = 'bluevault-shell-v2'
+const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icons/bluevault.svg', '/icons/bluevault-192.png', '/icons/bluevault-512.png']
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(APP_SHELL)))
